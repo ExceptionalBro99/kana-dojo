@@ -1474,7 +1474,7 @@
     "romaji": "Senri no michi mo ippo kara",
     "english": "A journey of a thousand miles begins with one step",
     "meaning": "Start small",
-    "completed": false,
+    "completed": true,
     "issued": false
   },
   {
@@ -1484,7 +1484,7 @@
     "english": "Early rising brings three coins of benefit",
     "meaning": "Wake early for advantage",
     "issued": false,
-    "completed": false
+    "completed": true
   },
   {
     "id": 166,
@@ -1520,7 +1520,7 @@
     "english": "The mouth is the source of misfortune",
     "meaning": "Careless words cause trouble",
     "completed": false,
-    "issued": false
+    "issued": true
   },
   {
     "id": 170,
