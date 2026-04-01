@@ -24,6 +24,8 @@ interface TilesModeOptions {
   minWordLength?: number;
   /** Maximum adaptive word length (default: 3) */
   maxWordLength?: number;
+  /** Number of consecutive correct answers needed to increase word length by 1 (default: 5) */
+  correctAnswersPerLengthStep?: number;
   /** Minimum consecutive correct answers in tiles mode before switching back (default: 2) */
   minTilesModeStreak?: number;
 }
@@ -39,10 +41,8 @@ interface TilesModeState {
   tilesModeStreak: number;
   /** Current word length */
   wordLength: number;
-  /** Smoothed learner performance score in range [0, 1] */
-  performanceScore: number;
-  /** Consecutive wrong answers */
-  consecutiveWrong: number;
+  /** Correct answers counted toward the next +1 word length step */
+  correctSinceLastLengthIncrease: number;
 }
 
 const clamp = (value: number, min: number, max: number): number =>
@@ -66,8 +66,7 @@ const createInitialTilesModeState = ({
   wordLength: enableAdaptiveWordLength
     ? minWordLength
     : clamp(initialWordLength, minWordLength, maxWordLength),
-  performanceScore: 0,
-  consecutiveWrong: 0,
+  correctSinceLastLengthIncrease: 0,
 });
 
 /**
@@ -98,58 +97,20 @@ export const useTilesMode = (options: TilesModeOptions = {}) => {
     enableAdaptiveWordLength = false,
     minWordLength = 1,
     maxWordLength = 3,
+    correctAnswersPerLengthStep = 5,
     minTilesModeStreak = 2,
   } = options;
   const activeSessionId = useClassicSessionStore(state => state.activeSessionId);
 
   const clampedMinWordLength = Math.max(1, minWordLength);
   const clampedMaxWordLength = Math.max(clampedMinWordLength, maxWordLength);
+  const clampedCorrectAnswersPerLengthStep = Math.max(
+    1,
+    correctAnswersPerLengthStep,
+  );
   const clampedNormalModeProbability = Math.max(
     0,
     Math.min(1, normalModeProbability),
-  );
-
-  const getAdaptiveWordLength = useCallback(
-    (
-      performanceScore: number,
-      consecutiveCorrect: number,
-      consecutiveWrong: number,
-      currentLength: number,
-    ): number => {
-      let nextLength = currentLength;
-
-      // Upgrade quickly for strong learners.
-      if (
-        currentLength < 2 &&
-        (performanceScore >= 0.35 || consecutiveCorrect >= 4)
-      ) {
-        nextLength = 2;
-      }
-      if (
-        currentLength < 3 &&
-        (performanceScore >= 0.72 || consecutiveCorrect >= 8)
-      ) {
-        nextLength = 3;
-      }
-
-      // Downgrade when the learner struggles repeatedly.
-      if (currentLength >= 3 && (performanceScore < 0.58 || consecutiveWrong >= 2)) {
-        nextLength = 2;
-      }
-      if (
-        currentLength >= 2 &&
-        performanceScore < 0.22 &&
-        consecutiveWrong >= 2
-      ) {
-        nextLength = 1;
-      }
-
-      return Math.max(
-        clampedMinWordLength,
-        Math.min(clampedMaxWordLength, nextLength),
-      );
-    },
-    [clampedMaxWordLength, clampedMinWordLength],
   );
 
   const initialState = useMemo(
@@ -180,53 +141,30 @@ export const useTilesMode = (options: TilesModeOptions = {}) => {
       ...prev,
       consecutiveCorrect: 0,
       tilesModeStreak: 0,
-      consecutiveWrong: prev.consecutiveWrong + 1,
-      performanceScore: Math.max(
-        0,
-        prev.performanceScore -
-          (prev.wordLength >= 3 ? 0.18 : prev.wordLength === 2 ? 0.12 : 0.06),
-      ),
+      correctSinceLastLengthIncrease: 0,
       wordLength: enableAdaptiveWordLength
-        ? getAdaptiveWordLength(
-            Math.max(
-              0,
-              prev.performanceScore -
-                (prev.wordLength >= 3
-                  ? 0.18
-                  : prev.wordLength === 2
-                    ? 0.12
-                    : 0.06),
-            ),
-            0,
-            prev.consecutiveWrong + 1,
-            prev.wordLength,
-          )
+        ? Math.max(clampedMinWordLength, prev.wordLength - 1)
         : prev.wordLength,
     }));
-  }, [enableAdaptiveWordLength, getAdaptiveWordLength]);
+  }, [clampedMinWordLength, enableAdaptiveWordLength]);
 
   // Call this only on correct answers to decide the next mode
   const decideNextMode = useCallback(() => {
     setState(prev => {
       const newConsecutive = prev.consecutiveCorrect + 1;
-      const newConsecutiveWrong = 0;
-      const performanceGain =
-        (prev.isTilesMode ? 0.14 : 0.08) + (newConsecutive >= 5 ? 0.04 : 0);
-      const newPerformanceScore = Math.min(
-        1,
-        prev.performanceScore + performanceGain,
-      );
       const newTilesModeStreak = prev.isTilesMode
         ? prev.tilesModeStreak + 1
         : 0;
-      const newWordLength = enableAdaptiveWordLength
-        ? getAdaptiveWordLength(
-            newPerformanceScore,
-            newConsecutive,
-            newConsecutiveWrong,
-            prev.wordLength,
-          )
+      const nextCorrectSinceIncrease = prev.correctSinceLastLengthIncrease + 1;
+      const shouldIncreaseLength =
+        enableAdaptiveWordLength &&
+        nextCorrectSinceIncrease >= clampedCorrectAnswersPerLengthStep;
+      const newWordLength = shouldIncreaseLength
+        ? Math.min(clampedMaxWordLength, prev.wordLength + 1)
         : prev.wordLength;
+      const resetCorrectSinceIncrease = shouldIncreaseLength
+        ? 0
+        : nextCorrectSinceIncrease;
 
       // If currently in tiles mode, check if we should exit
       if (prev.isTilesMode) {
@@ -241,8 +179,7 @@ export const useTilesMode = (options: TilesModeOptions = {}) => {
             isTilesReverse: false,
             consecutiveCorrect: newConsecutive,
             tilesModeStreak: 0,
-            consecutiveWrong: newConsecutiveWrong,
-            performanceScore: newPerformanceScore,
+            correctSinceLastLengthIncrease: resetCorrectSinceIncrease,
             wordLength: newWordLength,
           };
         }
@@ -250,8 +187,7 @@ export const useTilesMode = (options: TilesModeOptions = {}) => {
           ...prev,
           consecutiveCorrect: newConsecutive,
           tilesModeStreak: newTilesModeStreak,
-          consecutiveWrong: newConsecutiveWrong,
-          performanceScore: newPerformanceScore,
+          correctSinceLastLengthIncrease: resetCorrectSinceIncrease,
           wordLength: newWordLength,
         };
       }
@@ -274,8 +210,7 @@ export const useTilesMode = (options: TilesModeOptions = {}) => {
             isTilesReverse: random.real(0, 1) >= clampedNormalModeProbability,
             consecutiveCorrect: newConsecutive,
             tilesModeStreak: 0,
-            consecutiveWrong: newConsecutiveWrong,
-            performanceScore: newPerformanceScore,
+            correctSinceLastLengthIncrease: resetCorrectSinceIncrease,
             wordLength: newWordLength,
           };
         }
@@ -285,16 +220,16 @@ export const useTilesMode = (options: TilesModeOptions = {}) => {
       return {
         ...prev,
         consecutiveCorrect: newConsecutive,
-        consecutiveWrong: newConsecutiveWrong,
-        performanceScore: newPerformanceScore,
+        correctSinceLastLengthIncrease: resetCorrectSinceIncrease,
         wordLength: newWordLength,
       };
     });
   }, [
     baseProbability,
+    clampedCorrectAnswersPerLengthStep,
+    clampedMaxWordLength,
     clampedNormalModeProbability,
     enableAdaptiveWordLength,
-    getAdaptiveWordLength,
     incrementPerCorrect,
     maxProbability,
     minConsecutiveForTrigger,

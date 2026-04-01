@@ -43,4 +43,64 @@ describe('useTilesMode', () => {
       expect(result.current.wordLength).toBe(1);
     });
   });
+
+  it('increases word length by 1 after every 5 consecutive correct answers', () => {
+    const { result } = renderHook(() =>
+      useTilesMode({
+        enableAdaptiveWordLength: true,
+        minWordLength: 1,
+        maxWordLength: 3,
+        correctAnswersPerLengthStep: 5,
+      }),
+    );
+
+    expect(result.current.wordLength).toBe(1);
+
+    for (let i = 0; i < 5; i += 1) {
+      act(() => {
+        result.current.decideNextMode();
+      });
+    }
+    expect(result.current.wordLength).toBe(2);
+
+    for (let i = 0; i < 5; i += 1) {
+      act(() => {
+        result.current.decideNextMode();
+      });
+    }
+    expect(result.current.wordLength).toBe(3);
+  });
+
+  it('decreases word length by 1 on each wrong answer', () => {
+    const { result } = renderHook(() =>
+      useTilesMode({
+        enableAdaptiveWordLength: true,
+        minWordLength: 1,
+        maxWordLength: 3,
+        correctAnswersPerLengthStep: 5,
+      }),
+    );
+
+    for (let i = 0; i < 10; i += 1) {
+      act(() => {
+        result.current.decideNextMode();
+      });
+    }
+    expect(result.current.wordLength).toBe(3);
+
+    act(() => {
+      result.current.recordWrongAnswer();
+    });
+    expect(result.current.wordLength).toBe(2);
+
+    act(() => {
+      result.current.recordWrongAnswer();
+    });
+    expect(result.current.wordLength).toBe(1);
+
+    act(() => {
+      result.current.recordWrongAnswer();
+    });
+    expect(result.current.wordLength).toBe(1);
+  });
 });
